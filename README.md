@@ -177,7 +177,7 @@ cd ~/plan-my-day && python3 deploy.py --delete
 
 ```
 Your browser ──► Lambda function URL ──► app.py (the agent)
-                                            ├── Amazon Bedrock (Claude Haiku): understands you, picks tools
+                                            ├── Amazon Bedrock (Amazon Nova): understands you, picks tools
                                             └── DynamoDB: stores your events and to-dos
 ```
 

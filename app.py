@@ -10,6 +10,7 @@ import base64
 import hmac
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -17,7 +18,7 @@ import boto3
 from boto3.dynamodb.conditions import Attr
 
 # ---------- Settings (safe to change) ----------
-MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+MODEL_ID = os.environ.get("MODEL_ID", "us.amazon.nova-2-lite-v1:0")
 AGENT_PERSONALITY = (
     "You are Plan My Day, a friendly personal assistant for a busy college student. "
     "Be short, warm, and practical."
@@ -42,7 +43,10 @@ def table():
 def bedrock():
     global _bedrock
     if _bedrock is None:
-        _bedrock = boto3.client("bedrock-runtime")
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        if not region.startswith("us-"):
+            region = "us-east-1"  # the "us." model ID only works from US regions
+        _bedrock = boto3.client("bedrock-runtime", region_name=region)
     return _bedrock
 
 
@@ -224,13 +228,14 @@ def run_agent(history, now):
             system=system_prompt(now),
             messages=messages,
             toolConfig={"tools": TOOL_SPECS},
-            inferenceConfig={"maxTokens": 1024},
+            inferenceConfig={"maxTokens": 1024, "temperature": 0.3},
         )
         msg = resp["output"]["message"]
         messages.append(msg)
 
         if resp.get("stopReason") != "tool_use":
-            return "".join(c.get("text", "") for c in msg["content"]).strip()
+            text = "".join(c.get("text", "") for c in msg["content"])
+            return re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.S).strip()
 
         results = []
         for block in msg["content"]:
