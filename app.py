@@ -7,6 +7,7 @@ Plan My Day: a personal AI agent that runs on AWS Lambda.
 """
 
 import base64
+import datetime
 import hmac
 import json
 import os
@@ -192,17 +193,34 @@ TOOL_SPECS = [
 
 # ---------- The agent loop ----------
 
+def upcoming_dates(now):
+    """A 14-day cheat sheet so the model never has to do date math."""
+    found = re.search(r"\d{4}-\d{2}-\d{2}", now or "")
+    try:
+        start = datetime.date.fromisoformat(found.group()) if found else datetime.date.today()
+    except ValueError:
+        start = datetime.date.today()
+    lines = []
+    for i in range(14):
+        d = start + datetime.timedelta(days=i)
+        label = " (today)" if i == 0 else " (tomorrow)" if i == 1 else ""
+        lines.append(f"{d:%A} {d.isoformat()}{label}")
+    return "\n".join(lines)
+
+
 def system_prompt(now):
     return [{"text": (
         f"{AGENT_PERSONALITY}\n"
         f"The user's current local date and time is: {now}.\n"
+        f"Upcoming dates (use these, do not calculate dates yourself):\n{upcoming_dates(now)}\n"
         "Turn words like 'tomorrow', 'Thursday', or '4pm' into exact dates (YYYY-MM-DD) "
-        "and 24h times (HH:MM) before calling tools.\n"
+        "and 24h times (HH:MM) before calling tools. A weekday name means the next one "
+        "in the list above. When talking to the user, write times like 4:00 PM.\n"
         "When asked to plan the day: call list_items for that date, then write a simple "
         "time-blocked schedule that fits open tasks around fixed events, most urgent first, "
         "with short breaks. Never invent events that are not in the calendar.\n"
         "After adding or changing something, confirm it in one short sentence.\n"
-        "Use plain text, no markdown tables."
+        "Use plain text: no markdown, no bold, no tables."
     )}]
 
 
@@ -235,7 +253,8 @@ def run_agent(history, now):
 
         if resp.get("stopReason") != "tool_use":
             text = "".join(c.get("text", "") for c in msg["content"])
-            return re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.S).strip()
+            text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.S)
+            return text.replace("**", "").strip()
 
         results = []
         for block in msg["content"]:
