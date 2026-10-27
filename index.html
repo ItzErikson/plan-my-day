@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan My Day</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #0f1621; --panel: #161e2d; --panel2: #1d2738; --line: #2a3547;
+    --text: #e9edf2; --muted: #9aa7b8; --accent: #ff9900; --accent-ink: #161e2d;
+    --user: #233046; --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { margin: 0; font-size: 18px; }
+  header h1 span { color: var(--accent); }
+  header button { background: none; border: 1px solid var(--line); color: var(--muted); }
+  main { display: grid; grid-template-columns: 1fr 320px; height: calc(100vh - 57px); }
+  #chat { display: flex; flex-direction: column; min-height: 0; }
+  #log { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 75%; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { align-self: flex-end; background: var(--user); }
+  .msg.assistant { align-self: flex-start; background: var(--panel2); border: 1px solid var(--line); }
+  .msg.error { align-self: flex-start; color: var(--danger); background: none; border: 1px solid var(--danger); }
+  #chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 20px 10px; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 999px; padding: 6px 12px; font-size: 13px; }
+  form#send { display: flex; gap: 8px; padding: 12px 20px 20px; border-top: 1px solid var(--line); }
+  input, button { font: inherit; border-radius: 8px; }
+  input { flex: 1; padding: 10px 12px; background: var(--panel); color: var(--text); border: 1px solid var(--line); min-width: 0; }
+  button { cursor: pointer; padding: 10px 14px; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border: none; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: wait; }
+  aside { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 16px 18px; }
+  aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 8px; }
+  aside h2:first-child { margin-top: 0; }
+  .item { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; background: var(--panel2); }
+  .item small { color: var(--muted); display: block; }
+  .empty { color: var(--muted); font-size: 13px; }
+  #gate { position: fixed; inset: 0; background: var(--bg); display: grid; place-items: center; padding: 16px; }
+  #gate form { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; width: min(380px, 100%); display: grid; gap: 12px; }
+  #gate h2 { margin: 0; }
+  #gate p { margin: 0; color: var(--muted); }
+  #gateErr { color: var(--danger); min-height: 1.2em; font-size: 13px; }
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    aside { border-left: none; border-top: 1px solid var(--line); max-height: 35vh; }
+    .msg { max-width: 90%; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Plan My <span>Day</span></h1>
+  <button id="lock" type="button">Lock</button>
+</header>
+
+<main>
+  <section id="chat">
+    <div id="log"></div>
+    <div id="chips"></div>
+    <form id="send">
+      <input id="text" autocomplete="off" placeholder="Add a meeting at 4pm Thursday...">
+      <button class="primary" id="go">Send</button>
+    </form>
+  </section>
+  <aside>
+    <h2>Coming up</h2>
+    <div id="events"><p class="empty">Nothing yet.</p></div>
+    <h2>To-do</h2>
+    <div id="tasks"><p class="empty">Nothing yet.</p></div>
+  </aside>
+</main>
+
+<div id="gate">
+  <form id="gateForm">
+    <h2>Plan My Day</h2>
+    <p>Enter the passphrase you picked when you deployed.</p>
+    <input id="pass" type="password" autocomplete="current-password" placeholder="Passphrase">
+    <button class="primary">Unlock</button>
+    <div id="gateErr"></div>
+  </form>
+</div>
+
+<script>
+const EXAMPLES = [
+  "Add a meeting with my study group at 4pm Thursday",
+  "Add CS homework due Friday",
+  "Plan my day",
+  "What do I have this week?",
+];
+const $ = (id) => document.getElementById(id);
+let pass = "";
+try { pass = localStorage.getItem("pmd-pass") || ""; } catch (e) {}
+const history = [];
+
+function nowString() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const nice = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  return `${nice} (${iso})`;
+}
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: { "Content-Type": "application/json", "X-Passphrase": pass },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { showGate("Wrong passphrase. Try again."); throw new Error("locked"); }
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+function addMsg(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  $("log").appendChild(div);
+  $("log").scrollTop = $("log").scrollHeight;
+  return div;
+}
+
+function fmtDate(s) {
+  if (!s) return "";
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+function fmtTime(t) {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  return new Date(2000, 0, 1, h, m).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function renderList(el, items, line) {
+  el.innerHTML = "";
+  if (!items.length) { el.innerHTML = '<p class="empty">Nothing yet.</p>'; return; }
+  for (const it of items) {
+    const div = document.createElement("div");
+    div.className = "item";
+    const [title, sub] = line(it);
+    div.textContent = title;
+    const small = document.createElement("small");
+    small.textContent = sub;
+    div.appendChild(small);
+    el.appendChild(div);
+  }
+}
+
+async function refresh() {
+  const today = nowString().match(/\((\d{4}-\d{2}-\d{2})/)[1];
+  const data = await api("/api/items");
+  const upcoming = data.events.filter((e) => e.date >= today).slice(0, 15);
+  renderList($("events"), upcoming, (e) => [e.title, `${fmtDate(e.date)} · ${fmtTime(e.start)}${e.end ? " – " + fmtTime(e.end) : ""}`]);
+  renderList($("tasks"), data.open_tasks, (t) => [t.title, t.due_date ? "Due " + fmtDate(t.due_date) : "No due date"]);
+}
+
+async function send(text) {
+  if (!text.trim()) return;
+  addMsg("user", text);
+  history.push({ role: "user", text });
+  $("text").value = "";
+  $("go").disabled = true;
+  const thinking = addMsg("assistant", "Thinking...");
+  try {
+    const data = await api("/api/chat", { history, now: nowString() });
+    thinking.textContent = data.reply;
+    history.push({ role: "assistant", text: data.reply });
+    refresh().catch(() => {});
+  } catch (e) {
+    thinking.remove();
+    history.pop();
+    if (e.message !== "locked") addMsg("error", e.message);
+  } finally {
+    $("go").disabled = false;
+    $("text").focus();
+  }
+}
+
+function showGate(msg) {
+  $("gateErr").textContent = msg || "";
+  $("gate").style.display = "grid";
+  $("pass").focus();
+}
+
+$("gateForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  pass = $("pass").value.trim();
+  try {
+    await refresh();
+    try { localStorage.setItem("pmd-pass", pass); } catch (e) {}
+    $("gate").style.display = "none";
+    if (!$("log").children.length) addMsg("assistant", "Hi! Tell me about your classes, meetings, and homework, or say \"Plan my day\".");
+  } catch (err) {
+    if (err.message !== "locked") $("gateErr").textContent = err.message;
+  }
+});
+
+$("send").addEventListener("submit", (e) => { e.preventDefault(); send($("text").value); });
+
+$("lock").addEventListener("click", () => {
+  pass = "";
+  try { localStorage.removeItem("pmd-pass"); } catch (e) {}
+  showGate();
+});
+
+for (const ex of EXAMPLES) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "chip"; b.textContent = ex;
+  b.addEventListener("click", () => send(ex));
+  $("chips").appendChild(b);
+}
+
+if (pass) {
+  refresh().then(() => {
+    $("gate").style.display = "none";
+    addMsg("assistant", "Welcome back! What's on your plate?");
+  }).catch(() => showGate());
+} else {
+  showGate();
+}
+</script>
+</body>
+</html>
